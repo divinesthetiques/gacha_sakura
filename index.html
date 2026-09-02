@@ -24,7 +24,7 @@ const CONFIG = {
   twitch: {
     clientId: "d2q2e6g6thqi2rdy8tcvwxy591xztw",
     channel: "divinesthetiques",          // nom de la chaîne (minuscules)
-    scopes: "channel:read:redemptions chat:edit chat:read"
+    scopes: "channel:read:redemptions chat:edit chat:read channel:read:subscriptions"
   },
   // --- Discord (facultatif — laisse vide pour désactiver) ---
   discordWebhookUrl: "",
@@ -38,6 +38,7 @@ const CONFIG = {
 <!-- Firebase (Firestore) -->
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-auth-compat.js"></script>
 <!-- Client de chat Twitch -->
 <script src="https://cdn.jsdelivr.net/npm/tmi.js@1.8.5/dist/tmi.min.js"></script>
 
@@ -59,6 +60,7 @@ const CONFIG = {
     --rare:       #b98ee0;
     --legendary:  #e9b23f;
     --radius:     14px;
+    --taille-carte: 150px;
   }
 
   *{box-sizing:border-box;}
@@ -99,7 +101,7 @@ const CONFIG = {
     position:absolute;
     left:50%; top:38%;
     transform:translate(-50%,-50%) scale(.4);
-    width:230px; text-align:center;
+    width:calc(var(--taille-carte) + 30px); text-align:center;
     opacity:0;
     transition:opacity .6s ease, transform .6s cubic-bezier(.2,1.4,.4,1);
     pointer-events:none;
@@ -109,7 +111,7 @@ const CONFIG = {
 
   .carte-cadre{
     position:relative;
-    width:200px; height:290px; margin:0 auto;
+    width:var(--taille-carte); height:calc(var(--taille-carte) * 1.45); margin:0 auto;
     border-radius:16px;
     background:linear-gradient(160deg, var(--ink-panel-2), var(--ink-deep));
     border:3px solid var(--gold);
@@ -259,6 +261,8 @@ const REGLAGES_DEFAUT = {
   delaiMaxSec: 600,
   dureeAffichageSec: 25,
   chance: { commune: 70, rare: 40, legendaire: 15 }, // % de réussite à la capture
+  bonusAbonnesPourcent: 15, // points de % ajoutés à la chance si le viewer est abonné
+  tailleCarte: 150, // largeur en pixels de la carte affichée dans l'overlay
   rewardId: '', rewardTitle: '',
 };
 
@@ -335,6 +339,15 @@ const TwitchAuth = {
     const j = await res.json();
     return j.data || [];
   },
+  async estAbonne(broadcasterId, userId){
+    try{
+      const res = await fetch(`https://api.twitch.tv/helix/subscriptions?broadcaster_id=${broadcasterId}&user_id=${userId}`, {
+        headers:{ 'Client-Id':CONFIG.twitch.clientId, 'Authorization':`Bearer ${this.token()}` }
+      });
+      const j = await res.json();
+      return !!(j.data && j.data.length);
+    }catch(e){ return false; }
+  },
   async majStatutRedemption(broadcasterId, rewardId, redemptionId, statut){
     await fetch(`https://api.twitch.tv/helix/channel_points/custom_rewards/redemptions?broadcaster_id=${broadcasterId}&reward_id=${rewardId}&id=${redemptionId}`, {
       method:'PATCH',
@@ -371,7 +384,10 @@ async function initOverlay(){
   let broadcasterId = null;
 
   refCartes.onSnapshot(snap => { cartes = snap.docs.map(d=>({id:d.id, ...d.data()})); });
-  refConfig.onSnapshot(snap => { if(snap.exists) reglages = { ...REGLAGES_DEFAUT, ...snap.data() }; });
+  refConfig.onSnapshot(snap => {
+    reglages = { ...REGLAGES_DEFAUT, ...(snap.exists?snap.data():{}) };
+    document.documentElement.style.setProperty('--taille-carte', reglages.tailleCarte + 'px');
+  });
 
   function afficherCarte(carte){
     spawnActuel = { carte, expire: Date.now() + reglages.dureeAffichageSec*1000, attrapee:false };
@@ -464,7 +480,10 @@ async function initOverlay(){
       return;
     }
     const carte = spawnActuel.carte;
-    const chance = (reglages.chance[carte.rarete] ?? 50) / 100;
+    const abonne = await TwitchAuth.estAbonne(bId, evenement.user_id);
+    const base = reglages.chance[carte.rarete] ?? 50;
+    const bonus = abonne ? (reglages.bonusAbonnesPourcent||0) : 0;
+    const chance = Math.min(base + bonus, 95) / 100;
     const reussite = Math.random() < chance;
 
     if(reussite){
@@ -502,11 +521,44 @@ async function initOverlay(){
 /* =========================================================================
    VUE ADMIN — gestion des cartes, réglages, connexion Twitch
    ========================================================================= */
-async function initAdmin(){
+function initAdmin(){
+  firebase.auth().onAuthStateChanged(user => {
+    if(user) afficherPanneauAdmin(user);
+    else afficherConnexionAdmin();
+  });
+}
+
+function afficherConnexionAdmin(){
+  const app = $('#app');
+  app.innerHTML = `
+    <div class="page"><div class="conteneur" style="max-width:380px;">
+      <div class="entete"><div class="seal"></div><h1>Grimoire des Cartes</h1><p>Connexion à l'administration</p></div>
+      <div class="panneau-bloc">
+        <label>E-mail</label>
+        <input type="text" id="a-email" autocomplete="username">
+        <label>Mot de passe</label>
+        <input type="text" id="a-pass" autocomplete="current-password" style="-webkit-text-security:disc;">
+        <button class="bouton" id="a-connect" style="width:100%;">Se connecter</button>
+        <div id="a-msg"></div>
+      </div>
+    </div></div>
+  `;
+  $('#a-connect').onclick = async () => {
+    const msg = $('#a-msg');
+    try{
+      await firebase.auth().signInWithEmailAndPassword($('#a-email').value.trim(), $('#a-pass').value);
+    }catch(e){
+      msg.innerHTML = `<div class="msg erreur">Connexion refusée — vérifie l'e-mail et le mot de passe.</div>`;
+    }
+  };
+}
+
+async function afficherPanneauAdmin(user){
   const app = $('#app');
   app.innerHTML = `
     <div class="page"><div class="conteneur">
-      <div class="entete"><div class="seal"></div><h1>Grimoire des Cartes</h1><p>Panneau de gestion</p></div>
+      <div class="entete"><div class="seal"></div><h1>Grimoire des Cartes</h1><p>Panneau de gestion — ${user.email}</p></div>
+      <div style="text-align:center; margin-bottom:16px;"><button class="bouton secondaire" id="a-deconnect" style="margin:0;">Se déconnecter</button></div>
       <div class="onglets">
         <button data-t="cartes" class="actif">Cartes</button>
         <button data-t="reglages">Réglages</button>
@@ -604,6 +656,18 @@ async function initAdmin(){
         </div>
         <label>Légendaire</label>
         <input type="number" id="r-c-legendaire" value="${r.chance.legendaire}">
+        <label>Bonus de chance pour les abonnés (points de %, ex : 15 = +15%)</label>
+        <input type="number" id="r-bonus-abo" value="${r.bonusAbonnesPourcent}">
+        <p style="color:var(--text-mu); font-size:.8rem; margin-top:6px;">Nécessite d'être reconnecté à Twitch avec la nouvelle permission (onglet Connexion Twitch, se déconnecter puis se reconnecter) pour fonctionner.</p>
+      </div>
+      <div class="panneau-bloc">
+        <h2>Affichage</h2>
+        <label>Taille des cartes à l'écran</label>
+        <select id="r-taille">
+          <option value="110" ${r.tailleCarte==110?'selected':''}>Petite</option>
+          <option value="150" ${r.tailleCarte==150?'selected':''}>Moyenne</option>
+          <option value="200" ${r.tailleCarte==200?'selected':''}>Grande</option>
+        </select>
       </div>
       <button class="bouton" id="r-sauver">Enregistrer les réglages</button>
       <div id="r-msg"></div>
@@ -612,6 +676,8 @@ async function initAdmin(){
       await refConfig.set({
         delaiMinSec:+$('#r-min').value, delaiMaxSec:+$('#r-max').value, dureeAffichageSec:+$('#r-duree').value,
         chance:{ commune:+$('#r-c-commune').value, rare:+$('#r-c-rare').value, legendaire:+$('#r-c-legendaire').value },
+        bonusAbonnesPourcent:+$('#r-bonus-abo').value,
+        tailleCarte:+$('#r-taille').value,
         rewardId:r.rewardId, rewardTitle:r.rewardTitle
       });
       $('#r-msg').innerHTML = `<div class="msg succes">Réglages enregistrés.</div>`;
@@ -656,6 +722,7 @@ async function initAdmin(){
     $('#t-disconnect').onclick = () => { TwitchAuth.deconnecter(); rendreTwitch(); };
   }
   rendreTwitch();
+  $('#a-deconnect').onclick = () => firebase.auth().signOut();
 }
 
 /* =========================================================================
