@@ -294,7 +294,7 @@ function posterDiscord(texte){
 }
 
 function lienBibliotheque(login){
-  return `${https://divinesthetiques.github.io/gacha_sakura/index.html}?vue=bibliotheque&joueur=${encodeURIComponent(login.toLowerCase())}`;
+  return `${CONFIG.siteUrl}?vue=bibliotheque&joueur=${encodeURIComponent(login.toLowerCase())}`;
 }
 
 /* =========================================================================
@@ -550,7 +550,7 @@ async function initAdmin(){
       <div class="panneau-bloc">
         <h2>Cartes du jeu (${cartes.length})</h2>
         <div class="grille-cartes" id="grille-cartes">
-          ${cartes.length ? '' : '<div class="vide">Aucune carte pour l\\'instant — ajoute la première ci-dessus.</div>'}
+          ${cartes.length ? '' : "<div class=\"vide\">Aucune carte pour l'instant — ajoute la première ci-dessus.</div>"}
         </div>
       </div>
     `;
@@ -646,7 +646,7 @@ async function initAdmin(){
         <button class="bouton" id="t-save-reward">Enregistrer</button>
         <button class="bouton danger" id="t-disconnect" style="margin-left:8px;">Se déconnecter</button>
         <div id="t-msg"></div>
-        ${!recompenses.length ? '<div class="msg erreur">Aucune récompense trouvée — crée-la d\\'abord dans le tableau de bord créateur Twitch (Points de chaîne).</div>' : ''}
+        ${!recompenses.length ? "<div class=\"msg erreur\">Aucune récompense trouvée — crée-la d'abord dans le tableau de bord créateur Twitch (Points de chaîne).</div>" : ''}
       </div>`;
     $('#t-save-reward').onclick = async () => {
       const sel = $('#t-recompense');
