@@ -1,0 +1,700 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Grimoire des Cartes</title>
+
+<!-- ============================================================
+     CONFIGURATION — à remplir avant de mettre le fichier en ligne
+     Toutes les instructions détaillées sont dans README.md
+     ============================================================ -->
+<script>
+const CONFIG = {
+  // --- Firebase (base de données partagée cartes / collections) ---
+  firebase: {
+    apiKey: "AIzaSyAjAnpuus3K7Wvdz4mwwpj-dCG9u2C5J1s",
+    authDomain: "sakura-card-captor-twitch.firebaseapp.com",
+    projectId: "sakura-card-captor-twitch",
+    storageBucket: "sakura-card-captor-twitch.firebasestorage.app",
+    messagingSenderId: "583336340402",
+    appId: "1:583336340402:web:e8ab894ffeb63b7f9b12ab",
+  },
+  // --- Twitch ---
+  twitch: {
+    clientId: "COLLE_ICI_TON_CLIENT_ID_TWITCH",
+    channel: "divinesthetiques",          // nom de la chaîne (minuscules)
+    scopes: "channel:read:redemptions chat:edit chat:read"
+  },
+  // --- Discord (facultatif — laisse vide pour désactiver) ---
+  discordWebhookUrl: "",
+  // --- URL publique où ce fichier sera hébergé (pour générer le lien !macollection) ---
+  siteUrl: "https://COLLE_ICI_TON_URL_DHEBERGEMENT/index.html",
+  // --- Commande de chat pour consulter sa collection ---
+  chatCommand: "!macollection"
+};
+</script>
+
+<!-- Firebase (Firestore) -->
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore-compat.js"></script>
+<!-- Client de chat Twitch -->
+<script src="https://cdn.jsdelivr.net/npm/tmi.js@1.8.5/dist/tmi.min.js"></script>
+
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600;700&family=Nunito+Sans:wght@400;600;700;800&display=swap');
+
+  :root{
+    --ink-deep:   #211730;
+    --ink-panel:  #2c2043;
+    --ink-panel-2:#372952;
+    --gold:       #d3a94f;
+    --gold-soft:  #e9cf94;
+    --rose:       #e08aa6;
+    --rose-soft:  #f2c3d3;
+    --text-lo:    #f3ecf5;
+    --text-mu:    #b7a7c6;
+    --line:       rgba(211,169,79,0.28);
+    --common:     #9fb6c9;
+    --rare:       #b98ee0;
+    --legendary:  #e9b23f;
+    --radius:     14px;
+  }
+
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;height:100%;background:transparent;}
+  body{
+    font-family:'Nunito Sans', sans-serif;
+    color:var(--text-lo);
+    -webkit-font-smoothing:antialiased;
+  }
+  .stage-bg{ background: radial-gradient(ellipse at 50% 20%, #2f2348 0%, #1a1226 70%); }
+
+  h1,h2,h3,.display{
+    font-family:'Cinzel', serif;
+    letter-spacing:.02em;
+    margin:0;
+  }
+
+  /* ---------- Sceau magique décoratif ---------- */
+  .seal{
+    position:absolute; inset:0; margin:auto;
+    border-radius:50%;
+    border:2px solid var(--gold);
+    box-shadow:0 0 40px rgba(211,169,79,.35), inset 0 0 30px rgba(211,169,79,.15);
+    opacity:.9;
+  }
+  .seal::before{
+    content:"";
+    position:absolute; inset:14px;
+    border-radius:50%;
+    border:1px dashed var(--gold-soft);
+    opacity:.6;
+  }
+
+  /* ================= OVERLAY (OBS) ================= */
+  #vue-overlay{ width:100vw; height:100vh; position:relative; overflow:hidden; }
+
+  .carte-spawn{
+    position:absolute;
+    left:50%; top:38%;
+    transform:translate(-50%,-50%) scale(.4);
+    width:230px; text-align:center;
+    opacity:0;
+    transition:opacity .6s ease, transform .6s cubic-bezier(.2,1.4,.4,1);
+    pointer-events:none;
+  }
+  .carte-spawn.visible{ opacity:1; transform:translate(-50%,-50%) scale(1); }
+  .carte-spawn.attrapee{ opacity:0; transform:translate(-50%,-70%) scale(1.15); }
+
+  .carte-cadre{
+    position:relative;
+    width:200px; height:290px; margin:0 auto;
+    border-radius:16px;
+    background:linear-gradient(160deg, var(--ink-panel-2), var(--ink-deep));
+    border:3px solid var(--gold);
+    box-shadow:0 10px 40px rgba(0,0,0,.55), 0 0 30px var(--rarity-glow, rgba(211,169,79,.4));
+    overflow:hidden;
+  }
+  .carte-cadre img{ width:100%; height:100%; object-fit:cover; display:block; }
+  .carte-nom{
+    margin-top:10px; font-family:'Cinzel',serif; font-size:1.05rem;
+    text-shadow:0 2px 10px rgba(0,0,0,.7);
+  }
+  .carte-rarete{
+    display:inline-block; margin-top:4px; padding:2px 10px;
+    border-radius:999px; font-size:.7rem; font-weight:700; letter-spacing:.06em;
+    background:rgba(0,0,0,.35); border:1px solid var(--line);
+  }
+  .rarete-commune .carte-rarete{ color:var(--common); border-color:var(--common); }
+  .rarete-rare .carte-rarete{ color:var(--rare); border-color:var(--rare); }
+  .rarete-legendaire .carte-rarete{ color:var(--legendary); border-color:var(--legendary); }
+  .rarete-commune .carte-cadre{ --rarity-glow: rgba(159,182,201,.45); }
+  .rarete-rare .carte-cadre{ --rarity-glow: rgba(185,142,224,.5); }
+  .rarete-legendaire .carte-cadre{ --rarity-glow: rgba(233,178,63,.65); }
+
+  .instruction-capture{
+    position:absolute; left:50%; bottom:8%; transform:translateX(-50%);
+    font-size:.95rem; color:var(--gold-soft);
+    background:rgba(20,14,30,.55); padding:6px 16px; border-radius:999px;
+    border:1px solid var(--line); white-space:nowrap;
+  }
+
+  /* petit panneau réglage discret dans l'overlay (clic droit > Interagir dans OBS) */
+  .overlay-reglages{
+    position:absolute; top:14px; right:14px; z-index:10;
+  }
+  .overlay-reglages button{
+    background:rgba(20,14,30,.6); border:1px solid var(--line); color:var(--gold-soft);
+    width:34px; height:34px; border-radius:50%; cursor:pointer; font-size:1rem;
+  }
+  .overlay-reglages .panneau{
+    display:none; margin-top:8px; padding:14px; width:260px;
+    background:var(--ink-panel); border:1px solid var(--line); border-radius:var(--radius);
+    font-size:.85rem;
+  }
+  .overlay-reglages.ouvert .panneau{ display:block; }
+  .statut-ligne{ display:flex; align-items:center; gap:8px; margin-bottom:8px; }
+  .point{ width:9px; height:9px; border-radius:50%; background:#8a7fa0; flex:none; }
+  .point.ok{ background:#6bd88a; }
+  .point.ko{ background:#e0687f; }
+
+  /* ================= ADMIN & BIBLIOTHÈQUE ================= */
+  .page{ min-height:100vh; padding:40px 24px 80px; }
+  .conteneur{ max-width:980px; margin:0 auto; }
+
+  .entete{ text-align:center; margin-bottom:36px; position:relative; height:120px; }
+  .entete .seal{ width:120px; height:120px; }
+  .entete h1{ font-size:1.9rem; color:var(--gold-soft); position:relative; z-index:1; padding-top:34px; }
+  .entete p{ color:var(--text-mu); margin-top:6px; }
+
+  .onglets{ display:flex; gap:8px; justify-content:center; margin-bottom:28px; flex-wrap:wrap; }
+  .onglets button{
+    background:var(--ink-panel); color:var(--text-mu); border:1px solid var(--line);
+    padding:9px 18px; border-radius:999px; cursor:pointer; font:inherit; font-weight:700; font-size:.85rem;
+  }
+  .onglets button.actif{ background:var(--gold); color:var(--ink-deep); border-color:var(--gold); }
+
+  .panneau-bloc{
+    background:var(--ink-panel); border:1px solid var(--line); border-radius:var(--radius);
+    padding:24px; margin-bottom:22px;
+  }
+  .panneau-bloc h2{ font-size:1.15rem; color:var(--gold-soft); margin-bottom:14px; }
+  label{ display:block; font-size:.82rem; color:var(--text-mu); margin:12px 0 4px; }
+  input[type=text], input[type=number], input[type=url], select{
+    width:100%; padding:9px 12px; border-radius:8px; border:1px solid var(--line);
+    background:var(--ink-deep); color:var(--text-lo); font:inherit;
+  }
+  input[type=file]{ color:var(--text-mu); }
+  .rangee{ display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+  .bouton{
+    background:var(--gold); color:var(--ink-deep); border:none; padding:10px 20px;
+    border-radius:999px; font-weight:800; cursor:pointer; font:inherit; margin-top:16px;
+  }
+  .bouton.secondaire{ background:transparent; color:var(--gold-soft); border:1px solid var(--gold); }
+  .bouton.danger{ background:transparent; color:var(--rose); border:1px solid var(--rose); }
+  .bouton:disabled{ opacity:.5; cursor:default; }
+
+  .grille-cartes{ display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:16px; }
+  .mini-carte{
+    background:var(--ink-deep); border:1px solid var(--line); border-radius:12px; padding:10px; text-align:center;
+  }
+  .mini-carte img{ width:100%; aspect-ratio:3/4.3; object-fit:cover; border-radius:8px; margin-bottom:8px; }
+  .mini-carte .nom{ font-weight:800; font-size:.88rem; }
+  .mini-carte .rar{ font-size:.72rem; color:var(--text-mu); margin-top:2px; }
+  .mini-carte .actions{ display:flex; gap:6px; margin-top:8px; justify-content:center; }
+  .mini-carte .actions button{
+    font-size:.75rem; padding:4px 10px; border-radius:999px; cursor:pointer; font:inherit;
+    background:transparent; border:1px solid var(--line); color:var(--text-mu);
+  }
+
+  /* Bibliothèque viewer */
+  .bib-grille{ display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:18px; }
+  .bib-carte{ text-align:center; }
+  .bib-carte .cadre{
+    width:100%; aspect-ratio:3/4.3; border-radius:14px; overflow:hidden;
+    border:2px solid var(--gold); background:var(--ink-panel-2);
+    box-shadow:0 6px 20px rgba(0,0,0,.4);
+  }
+  .bib-carte img{ width:100%; height:100%; object-fit:cover; display:block; }
+  .bib-carte.non-obtenue .cadre{
+    border-color:var(--line); filter:grayscale(1) brightness(.35); position:relative;
+  }
+  .bib-carte.non-obtenue .cadre::after{
+    content:"?"; position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+    font-family:'Cinzel',serif; font-size:2.4rem; color:rgba(255,255,255,.5);
+  }
+  .bib-carte .nom{ margin-top:8px; font-weight:800; font-size:.85rem; }
+  .bib-carte .qte{ font-size:.72rem; color:var(--gold-soft); }
+  .bib-resume{ text-align:center; color:var(--text-mu); margin-bottom:22px; }
+  .bib-resume b{ color:var(--gold-soft); }
+
+  .vide{ text-align:center; color:var(--text-mu); padding:40px 0; }
+  .msg{ font-size:.85rem; padding:10px 14px; border-radius:8px; margin-top:10px; }
+  .msg.erreur{ background:rgba(224,104,127,.15); color:var(--rose); border:1px solid var(--rose); }
+  .msg.succes{ background:rgba(107,216,138,.12); color:#8fe3a8; border:1px solid #6bd88a; }
+
+  @media (max-width:640px){ .rangee{ grid-template-columns:1fr; } }
+</style>
+</head>
+<body class="stage-bg">
+<div id="app"></div>
+
+<script>
+/* =========================================================================
+   GRIMOIRE DES CARTES — jeu gacha Twitch (thème Sakura Card Captor)
+   Fichier unique : overlay OBS + panneau admin + bibliothèque des viewers
+   Toute la logique métier est ici ; voir README.md pour la mise en route.
+   ========================================================================= */
+
+/* ---------- Firebase ---------- */
+firebase.initializeApp(CONFIG.firebase);
+const db = firebase.firestore();
+const refCartes   = db.collection('cartes');
+const refConfig   = db.collection('config').doc('reglages');
+const refCaptures = (login) => db.collection('captures').doc(login.toLowerCase());
+
+const REGLAGES_DEFAUT = {
+  delaiMinSec: 240,
+  delaiMaxSec: 600,
+  dureeAffichageSec: 25,
+  chance: { commune: 70, rare: 40, legendaire: 15 }, // % de réussite à la capture
+  rewardId: '', rewardTitle: '',
+};
+
+/* ---------- Utilitaires ---------- */
+const $ = (sel, el=document) => el.querySelector(sel);
+const params = new URLSearchParams(location.search);
+const vue = params.get('vue') || 'overlay';
+
+function tirageAlea(cartes){
+  // fréquence d'apparition inversement proportionnelle à la rareté
+  const poids = { commune: 6, rare: 3, legendaire: 1 };
+  const pool = [];
+  cartes.forEach(c => { for(let i=0;i<(poids[c.rarete]||1);i++) pool.push(c); });
+  if(!pool.length) return null;
+  return pool[Math.floor(Math.random()*pool.length)];
+}
+
+async function fichierEnBase64(fichier){
+  return new Promise((res,rej)=>{
+    const r = new FileReader();
+    r.onload = () => res(r.result);
+    r.onerror = rej;
+    r.readAsDataURL(fichier);
+  });
+}
+
+function posterDiscord(texte){
+  if(!CONFIG.discordWebhookUrl) return;
+  fetch(CONFIG.discordWebhookUrl, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ content: texte })
+  }).catch(()=>{});
+}
+
+function lienBibliotheque(login){
+  return `${CONFIG.siteUrl}?vue=bibliotheque&joueur=${encodeURIComponent(login.toLowerCase())}`;
+}
+
+/* =========================================================================
+   AUTHENTIFICATION TWITCH (OAuth implicite, exécutée dans le navigateur)
+   Le jeton est gardé en local sur CET appareil/navigateur uniquement
+   (ex : le navigateur de la source OBS, ou celui de l'admin) — voir README.
+   ========================================================================= */
+const TwitchAuth = {
+  cle: 'grimoire_twitch_token',
+
+  recupererDepuisUrl(){
+    if(location.hash.includes('access_token')){
+      const p = new URLSearchParams(location.hash.slice(1));
+      const token = p.get('access_token');
+      if(token){ localStorage.setItem(this.cle, token); history.replaceState(null,'',location.pathname+location.search); }
+    }
+  },
+  token(){ return localStorage.getItem(this.cle); },
+  deconnecter(){ localStorage.removeItem(this.cle); },
+  connecter(){
+    const redirect = encodeURIComponent(location.origin + location.pathname + location.search);
+    const url = `https://id.twitch.tv/oauth2/authorize?client_id=${CONFIG.twitch.clientId}`
+      + `&redirect_uri=${redirect}&response_type=token`
+      + `&scope=${encodeURIComponent(CONFIG.twitch.scopes)}`;
+    location.href = url;
+  },
+  async utilisateur(){
+    const res = await fetch('https://api.twitch.tv/helix/users', {
+      headers:{ 'Client-Id':CONFIG.twitch.clientId, 'Authorization':`Bearer ${this.token()}` }
+    });
+    const j = await res.json();
+    return j.data && j.data[0];
+  },
+  async recompenses(broadcasterId){
+    const res = await fetch(`https://api.twitch.tv/helix/channel_points/custom_rewards?broadcaster_id=${broadcasterId}`, {
+      headers:{ 'Client-Id':CONFIG.twitch.clientId, 'Authorization':`Bearer ${this.token()}` }
+    });
+    const j = await res.json();
+    return j.data || [];
+  },
+  async majStatutRedemption(broadcasterId, rewardId, redemptionId, statut){
+    await fetch(`https://api.twitch.tv/helix/channel_points/custom_rewards/redemptions?broadcaster_id=${broadcasterId}&reward_id=${rewardId}&id=${redemptionId}`, {
+      method:'PATCH',
+      headers:{ 'Client-Id':CONFIG.twitch.clientId, 'Authorization':`Bearer ${this.token()}`, 'Content-Type':'application/json' },
+      body: JSON.stringify({ status: statut }) // 'FULFILLED' ou 'CANCELED'
+    }).catch(()=>{});
+  }
+};
+TwitchAuth.recupererDepuisUrl();
+
+/* =========================================================================
+   VUE OVERLAY — affichée dans OBS (Browser Source)
+   ========================================================================= */
+async function initOverlay(){
+  const app = $('#app');
+  app.innerHTML = `
+    <div id="vue-overlay">
+      <div class="overlay-reglages" id="regl-toggle">
+        <button title="Réglages">⚙</button>
+        <div class="panneau">
+          <div class="statut-ligne"><span class="point" id="pt-twitch"></span> Connexion Twitch</div>
+          <div class="statut-ligne"><span class="point" id="pt-chat"></span> Chat</div>
+          <div id="zone-connexion"></div>
+        </div>
+      </div>
+      <div class="carte-spawn" id="carte-spawn"></div>
+    </div>
+  `;
+  $('#regl-toggle button').onclick = () => $('#regl-toggle').classList.toggle('ouvert');
+
+  let cartes = [];
+  let reglages = REGLAGES_DEFAUT;
+  let spawnActuel = null; // { carte, expire, attrapee }
+  let broadcasterId = null;
+
+  refCartes.onSnapshot(snap => { cartes = snap.docs.map(d=>({id:d.id, ...d.data()})); });
+  refConfig.onSnapshot(snap => { if(snap.exists) reglages = { ...REGLAGES_DEFAUT, ...snap.data() }; });
+
+  function afficherCarte(carte){
+    spawnActuel = { carte, expire: Date.now() + reglages.dureeAffichageSec*1000, attrapee:false };
+    const el = $('#carte-spawn');
+    el.className = `carte-spawn rarete-${carte.rarete}`;
+    el.innerHTML = `
+      <div class="carte-cadre"><img src="${carte.image}" alt=""></div>
+      <div class="carte-nom">${carte.nom}</div>
+      <div class="carte-rarete">${carte.rarete}</div>
+      <div class="instruction-capture">Utilisez la récompense de points pour l'attraper !</div>
+    `;
+    requestAnimationFrame(()=> el.classList.add('visible'));
+    setTimeout(()=>{ if(spawnActuel && !spawnActuel.attrapee) masquerCarte(); }, reglages.dureeAffichageSec*1000);
+  }
+  function masquerCarte(){
+    $('#carte-spawn').classList.remove('visible');
+    spawnActuel = null;
+  }
+  function marquerAttrapee(){
+    if(!spawnActuel) return;
+    spawnActuel.attrapee = true;
+    $('#carte-spawn').classList.add('attrapee');
+    setTimeout(()=> $('#carte-spawn').classList.remove('visible','attrapee'), 650);
+    spawnActuel = null;
+  }
+
+  function planifierProchaineApparition(){
+    const delai = (reglages.delaiMinSec + Math.random()*(reglages.delaiMaxSec-reglages.delaiMinSec)) * 1000;
+    setTimeout(()=>{
+      if(!spawnActuel && cartes.length){
+        const carte = tirageAlea(cartes);
+        if(carte) afficherCarte(carte);
+      }
+      planifierProchaineApparition();
+    }, delai);
+  }
+  planifierProchaineApparition();
+
+  /* ---- Connexion Twitch (à faire une fois, via clic droit > Interagir dans OBS) ---- */
+  async function connecterTwitch(){
+    if(!TwitchAuth.token()){
+      $('#zone-connexion').innerHTML = `<button class="bouton" id="btn-connect" style="margin-top:4px;">Se connecter à Twitch</button>`;
+      $('#btn-connect').onclick = () => TwitchAuth.connecter();
+      return;
+    }
+    const user = await TwitchAuth.utilisateur();
+    if(!user){ TwitchAuth.deconnecter(); return connecterTwitch(); }
+    broadcasterId = user.id;
+    $('#pt-twitch').classList.add('ok');
+    $('#zone-connexion').innerHTML = `<div style="color:var(--text-mu)">Connecté : ${user.display_name}</div>`;
+
+    demarrerEventSub(user.id);
+    demarrerChat();
+  }
+  connecterTwitch();
+
+  /* ---- EventSub (écoute des rédemptions de points de chaîne) ---- */
+  function demarrerEventSub(bId){
+    const ws = new WebSocket('wss://eventsub.wss.twitch.tv/ws');
+    ws.onmessage = async (evt) => {
+      const msg = JSON.parse(evt.data);
+      const type = msg.metadata && msg.metadata.message_type;
+      if(type === 'session_welcome'){
+        const sessionId = msg.payload.session.id;
+        await fetch('https://api.twitch.tv/helix/eventsub/subscriptions', {
+          method:'POST',
+          headers:{ 'Client-Id':CONFIG.twitch.clientId, 'Authorization':`Bearer ${TwitchAuth.token()}`, 'Content-Type':'application/json' },
+          body: JSON.stringify({
+            type:'channel.channel_points_custom_reward_redemption.add',
+            version:'1',
+            condition:{ broadcaster_user_id: bId, reward_id: reglages.rewardId || undefined },
+            transport:{ method:'websocket', session_id: sessionId }
+          })
+        });
+      }
+      if(type === 'notification'){
+        const evenement = msg.payload.event;
+        gererTentativeCapture(evenement, bId);
+      }
+      if(type === 'session_reconnect'){
+        ws.close(); demarrerEventSub(bId);
+      }
+    };
+  }
+
+  async function gererTentativeCapture(evenement, bId){
+    const pseudo = evenement.user_login;
+    if(!spawnActuel || spawnActuel.attrapee) {
+      await TwitchAuth.majStatutRedemption(bId, evenement.reward.id, evenement.id, 'CANCELED');
+      return;
+    }
+    const carte = spawnActuel.carte;
+    const chance = (reglages.chance[carte.rarete] ?? 50) / 100;
+    const reussite = Math.random() < chance;
+
+    if(reussite){
+      marquerAttrapee();
+      await refCaptures(pseudo).set({ [carte.id]: firebase.firestore.FieldValue.increment(1) }, { merge:true });
+      await TwitchAuth.majStatutRedemption(bId, evenement.reward.id, evenement.id, 'FULFILLED');
+      envoyerChat(`✨ ${pseudo} a capturé la carte ${carte.rarete==='legendaire'?'LÉGENDAIRE':carte.rarete} « ${carte.nom} » !`);
+      posterDiscord(`✨ **${pseudo}** a capturé la carte *${carte.nom}* (${carte.rarete}) !`);
+    } else {
+      await TwitchAuth.majStatutRedemption(bId, evenement.reward.id, evenement.id, 'CANCELED');
+      envoyerChat(`💨 ${pseudo} a tenté d'attraper « ${carte.nom} »... la carte s'est échappée !`);
+    }
+  }
+
+  /* ---- Chat (lecture de !macollection + envoi des messages du jeu) ---- */
+  let clientChat = null;
+  function demarrerChat(){
+    clientChat = new tmi.Client({
+      identity:{ username: CONFIG.twitch.channel, password: `oauth:${TwitchAuth.token()}` },
+      channels:[ CONFIG.twitch.channel ]
+    });
+    clientChat.connect().then(()=> $('#pt-chat').classList.add('ok')).catch(()=>{});
+    clientChat.on('message', (channel, tags, message) => {
+      if(message.trim().toLowerCase() === CONFIG.chatCommand.toLowerCase()){
+        const pseudo = tags['display-name'] || tags.username;
+        envoyerChat(`@${pseudo} voici ta bibliothèque : ${lienBibliotheque(tags.username)}`);
+      }
+    });
+  }
+  function envoyerChat(texte){
+    if(clientChat) clientChat.say(CONFIG.twitch.channel, texte).catch(()=>{});
+  }
+}
+
+/* =========================================================================
+   VUE ADMIN — gestion des cartes, réglages, connexion Twitch
+   ========================================================================= */
+async function initAdmin(){
+  const app = $('#app');
+  app.innerHTML = `
+    <div class="page"><div class="conteneur">
+      <div class="entete"><div class="seal"></div><h1>Grimoire des Cartes</h1><p>Panneau de gestion</p></div>
+      <div class="onglets">
+        <button data-t="cartes" class="actif">Cartes</button>
+        <button data-t="reglages">Réglages</button>
+        <button data-t="twitch">Connexion Twitch</button>
+      </div>
+      <div id="onglet-cartes"></div>
+      <div id="onglet-reglages" style="display:none"></div>
+      <div id="onglet-twitch" style="display:none"></div>
+    </div></div>
+  `;
+  document.querySelectorAll('.onglets button').forEach(b=>{
+    b.onclick = () => {
+      document.querySelectorAll('.onglets button').forEach(x=>x.classList.remove('actif'));
+      b.classList.add('actif');
+      ['cartes','reglages','twitch'].forEach(t => $('#onglet-'+t).style.display = (t===b.dataset.t?'block':'none'));
+    };
+  });
+
+  /* ---- Onglet Cartes ---- */
+  function rendreCartes(cartes){
+    $('#onglet-cartes').innerHTML = `
+      <div class="panneau-bloc">
+        <h2>Ajouter une carte</h2>
+        <label>Nom de la carte</label>
+        <input type="text" id="c-nom" placeholder="Ex : Le Bouclier">
+        <div class="rangee">
+          <div><label>Rareté</label>
+            <select id="c-rarete">
+              <option value="commune">Commune</option>
+              <option value="rare">Rare</option>
+              <option value="legendaire">Légendaire</option>
+            </select>
+          </div>
+          <div><label>Image de la carte</label>
+            <input type="file" id="c-image" accept="image/*">
+          </div>
+        </div>
+        <button class="bouton" id="c-ajouter">Ajouter la carte</button>
+        <div id="c-msg"></div>
+      </div>
+      <div class="panneau-bloc">
+        <h2>Cartes du jeu (${cartes.length})</h2>
+        <div class="grille-cartes" id="grille-cartes">
+          ${cartes.length ? '' : '<div class="vide">Aucune carte pour l\\'instant — ajoute la première ci-dessus.</div>'}
+        </div>
+      </div>
+    `;
+    const grille = $('#grille-cartes');
+    cartes.forEach(c=>{
+      const el = document.createElement('div');
+      el.className = 'mini-carte';
+      el.innerHTML = `
+        <img src="${c.image}" alt="">
+        <div class="nom">${c.nom}</div>
+        <div class="rar">${c.rarete}</div>
+        <div class="actions"><button data-id="${c.id}">Supprimer</button></div>
+      `;
+      el.querySelector('button').onclick = async () => {
+        if(confirm(`Supprimer « ${c.nom} » ?`)) await refCartes.doc(c.id).delete();
+      };
+      grille.appendChild(el);
+    });
+
+    $('#c-ajouter').onclick = async () => {
+      const nom = $('#c-nom').value.trim();
+      const rarete = $('#c-rarete').value;
+      const fichier = $('#c-image').files[0];
+      const msg = $('#c-msg');
+      if(!nom || !fichier){ msg.innerHTML = `<div class="msg erreur">Nom et image sont obligatoires.</div>`; return; }
+      const image = await fichierEnBase64(fichier);
+      await refCartes.add({ nom, rarete, image, cree: Date.now() });
+      msg.innerHTML = `<div class="msg succes">Carte ajoutée !</div>`;
+      $('#c-nom').value=''; $('#c-image').value='';
+    };
+  }
+  refCartes.onSnapshot(snap => rendreCartes(snap.docs.map(d=>({id:d.id, ...d.data()}))));
+
+  /* ---- Onglet Réglages ---- */
+  function rendreReglages(r){
+    $('#onglet-reglages').innerHTML = `
+      <div class="panneau-bloc">
+        <h2>Apparition des cartes</h2>
+        <div class="rangee">
+          <div><label>Délai minimum (secondes)</label><input type="number" id="r-min" value="${r.delaiMinSec}"></div>
+          <div><label>Délai maximum (secondes)</label><input type="number" id="r-max" value="${r.delaiMaxSec}"></div>
+        </div>
+        <label>Durée d'affichage d'une carte (secondes)</label>
+        <input type="number" id="r-duree" value="${r.dureeAffichageSec}">
+      </div>
+      <div class="panneau-bloc">
+        <h2>Chance de capture par rareté (%)</h2>
+        <div class="rangee">
+          <div><label>Commune</label><input type="number" id="r-c-commune" value="${r.chance.commune}"></div>
+          <div><label>Rare</label><input type="number" id="r-c-rare" value="${r.chance.rare}"></div>
+        </div>
+        <label>Légendaire</label>
+        <input type="number" id="r-c-legendaire" value="${r.chance.legendaire}">
+      </div>
+      <button class="bouton" id="r-sauver">Enregistrer les réglages</button>
+      <div id="r-msg"></div>
+    `;
+    $('#r-sauver').onclick = async () => {
+      await refConfig.set({
+        delaiMinSec:+$('#r-min').value, delaiMaxSec:+$('#r-max').value, dureeAffichageSec:+$('#r-duree').value,
+        chance:{ commune:+$('#r-c-commune').value, rare:+$('#r-c-rare').value, legendaire:+$('#r-c-legendaire').value },
+        rewardId:r.rewardId, rewardTitle:r.rewardTitle
+      });
+      $('#r-msg').innerHTML = `<div class="msg succes">Réglages enregistrés.</div>`;
+    };
+  }
+  refConfig.onSnapshot(snap => rendreReglages({ ...REGLAGES_DEFAUT, ...(snap.exists?snap.data():{}) }));
+
+  /* ---- Onglet Twitch ---- */
+  async function rendreTwitch(){
+    const zone = $('#onglet-twitch');
+    if(!TwitchAuth.token()){
+      zone.innerHTML = `
+        <div class="panneau-bloc">
+          <h2>Connexion Twitch</h2>
+          <p style="color:var(--text-mu)">Connecte-toi pour choisir la récompense de points de chaîne utilisée pour attraper les cartes.</p>
+          <button class="bouton" id="t-connect">Se connecter à Twitch</button>
+        </div>`;
+      $('#t-connect').onclick = () => TwitchAuth.connecter();
+      return;
+    }
+    const user = await TwitchAuth.utilisateur();
+    const recompenses = await TwitchAuth.recompenses(user.id);
+    const config = (await refConfig.get()).data() || REGLAGES_DEFAUT;
+    zone.innerHTML = `
+      <div class="panneau-bloc">
+        <h2>Connecté en tant que ${user.display_name}</h2>
+        <label>Récompense de points utilisée pour attraper une carte</label>
+        <select id="t-recompense">
+          <option value="">— choisir —</option>
+          ${recompenses.map(r=>`<option value="${r.id}" ${r.id===config.rewardId?'selected':''}>${r.title} (${r.cost} pts)</option>`).join('')}
+        </select>
+        <button class="bouton" id="t-save-reward">Enregistrer</button>
+        <button class="bouton danger" id="t-disconnect" style="margin-left:8px;">Se déconnecter</button>
+        <div id="t-msg"></div>
+        ${!recompenses.length ? '<div class="msg erreur">Aucune récompense trouvée — crée-la d\\'abord dans le tableau de bord créateur Twitch (Points de chaîne).</div>' : ''}
+      </div>`;
+    $('#t-save-reward').onclick = async () => {
+      const sel = $('#t-recompense');
+      await refConfig.set({ ...REGLAGES_DEFAUT, ...config, rewardId: sel.value, rewardTitle: sel.options[sel.selectedIndex].text }, { merge:true });
+      $('#t-msg').innerHTML = `<div class="msg succes">Récompense enregistrée.</div>`;
+    };
+    $('#t-disconnect').onclick = () => { TwitchAuth.deconnecter(); rendreTwitch(); };
+  }
+  rendreTwitch();
+}
+
+/* =========================================================================
+   VUE BIBLIOTHÈQUE — collection publique d'un viewer (lien envoyé en chat)
+   ========================================================================= */
+async function initBibliotheque(){
+  const joueur = (params.get('joueur')||'').toLowerCase();
+  const app = $('#app');
+  app.innerHTML = `
+    <div class="page"><div class="conteneur">
+      <div class="entete"><div class="seal"></div><h1>Bibliothèque de ${joueur || '???'}</h1></div>
+      <div class="bib-resume" id="bib-resume"></div>
+      <div class="bib-grille" id="bib-grille"></div>
+    </div></div>
+  `;
+  if(!joueur){ $('#bib-grille').innerHTML = `<div class="vide">Aucun joueur indiqué dans le lien.</div>`; return; }
+
+  let cartes = [];
+  let captures = {};
+  function rendre(){
+    const total = cartes.length;
+    const obtenues = cartes.filter(c => captures[c.id]).length;
+    $('#bib-resume').innerHTML = `<b>${obtenues}</b> / ${total} cartes obtenues`;
+    $('#bib-grille').innerHTML = cartes.map(c => `
+      <div class="bib-carte ${captures[c.id]?'':'non-obtenue'}">
+        <div class="cadre">${captures[c.id] ? `<img src="${c.image}" alt="">` : ''}</div>
+        <div class="nom">${captures[c.id] ? c.nom : '???'}</div>
+        ${captures[c.id] ? `<div class="qte">x${captures[c.id]}</div>` : ''}
+      </div>
+    `).join('') || `<div class="vide">Aucune carte n'existe encore dans le jeu.</div>`;
+  }
+  refCartes.onSnapshot(snap => { cartes = snap.docs.map(d=>({id:d.id, ...d.data()})); rendre(); });
+  refCaptures(joueur).onSnapshot(snap => { captures = snap.exists ? snap.data() : {}; rendre(); });
+}
+
+/* ---------- Aiguillage ---------- */
+if(vue === 'admin') initAdmin();
+else if(vue === 'bibliotheque') initBibliotheque();
+else initOverlay();
+</script>
+</body>
+</html>
