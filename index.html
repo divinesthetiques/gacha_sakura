@@ -22,7 +22,7 @@ const CONFIG = {
   },
   // --- Twitch ---
   twitch: {
-    clientId: "COLLE_ICI_TON_CLIENT_ID_TWITCH",
+    clientId: "d2q2e6g6thqi2rdy8tcvwxy591xztw",
     channel: "divinesthetiques",          // nom de la chaîne (minuscules)
     scopes: "channel:read:redemptions chat:edit chat:read"
   },
@@ -316,21 +316,21 @@ const TwitchAuth = {
   deconnecter(){ localStorage.removeItem(this.cle); },
   connecter(){
     const redirect = encodeURIComponent(location.origin + location.pathname + location.search);
-    const url = `https://id.twitch.tv/oauth2/authorize?client_id=${CONFIG.twitch.clientId}`
+    const url = `https://id.twitch.tv/oauth2/authorize?client_id=${d2q2e6g6thqi2rdy8tcvwxy591xztw}`
       + `&redirect_uri=${redirect}&response_type=token`
       + `&scope=${encodeURIComponent(CONFIG.twitch.scopes)}`;
     location.href = url;
   },
   async utilisateur(){
     const res = await fetch('https://api.twitch.tv/helix/users', {
-      headers:{ 'Client-Id':CONFIG.twitch.clientId, 'Authorization':`Bearer ${this.token()}` }
+      headers:{ 'Client-Id':d2q2e6g6thqi2rdy8tcvwxy591xztw, 'Authorization':`Bearer ${this.token()}` }
     });
     const j = await res.json();
     return j.data && j.data[0];
   },
   async recompenses(broadcasterId){
     const res = await fetch(`https://api.twitch.tv/helix/channel_points/custom_rewards?broadcaster_id=${broadcasterId}`, {
-      headers:{ 'Client-Id':CONFIG.twitch.clientId, 'Authorization':`Bearer ${this.token()}` }
+      headers:{ 'Client-Id':d2q2e6g6thqi2rdy8tcvwxy591xztw, 'Authorization':`Bearer ${this.token()}` }
     });
     const j = await res.json();
     return j.data || [];
@@ -338,7 +338,7 @@ const TwitchAuth = {
   async majStatutRedemption(broadcasterId, rewardId, redemptionId, statut){
     await fetch(`https://api.twitch.tv/helix/channel_points/custom_rewards/redemptions?broadcaster_id=${broadcasterId}&reward_id=${rewardId}&id=${redemptionId}`, {
       method:'PATCH',
-      headers:{ 'Client-Id':CONFIG.twitch.clientId, 'Authorization':`Bearer ${this.token()}`, 'Content-Type':'application/json' },
+      headers:{ 'Client-Id':d2q2e6g6thqi2rdy8tcvwxy591xztw, 'Authorization':`Bearer ${this.token()}`, 'Content-Type':'application/json' },
       body: JSON.stringify({ status: statut }) // 'FULFILLED' ou 'CANCELED'
     }).catch(()=>{});
   }
@@ -438,7 +438,7 @@ async function initOverlay(){
         const sessionId = msg.payload.session.id;
         await fetch('https://api.twitch.tv/helix/eventsub/subscriptions', {
           method:'POST',
-          headers:{ 'Client-Id':CONFIG.twitch.clientId, 'Authorization':`Bearer ${TwitchAuth.token()}`, 'Content-Type':'application/json' },
+          headers:{ 'Client-Id':d2q2e6g6thqi2rdy8tcvwxy591xztw, 'Authorization':`Bearer ${TwitchAuth.token()}`, 'Content-Type':'application/json' },
           body: JSON.stringify({
             type:'channel.channel_points_custom_reward_redemption.add',
             version:'1',
@@ -483,7 +483,7 @@ async function initOverlay(){
   let clientChat = null;
   function demarrerChat(){
     clientChat = new tmi.Client({
-      identity:{ username: CONFIG.twitch.channel, password: `oauth:${TwitchAuth.token()}` },
+      identity:{ username: divinesthetiques, password: `oauth:${TwitchAuth.token()}` },
       channels:[ CONFIG.twitch.channel ]
     });
     clientChat.connect().then(()=> $('#pt-chat').classList.add('ok')).catch(()=>{});
