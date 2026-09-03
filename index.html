@@ -307,6 +307,22 @@ const $ = (sel, el=document) => el.querySelector(sel);
 const params = new URLSearchParams(location.search);
 const vue = params.get('vue') || 'overlay';
 
+const ORDRE_RARETE = { commune:0, rare:1, legendaire:2 };
+function nomDeCollection(collectionId, collections){
+  return (collections.find(c=>c.id===collectionId)||{}).nom || 'Sans collection';
+}
+function trierCartes(liste, tri, collections){
+  const copie = [...liste];
+  if(tri === 'rarete'){
+    copie.sort((a,b) => (ORDRE_RARETE[a.rarete]??9) - (ORDRE_RARETE[b.rarete]??9) || a.nom.localeCompare(b.nom));
+  } else if(tri === 'collection'){
+    copie.sort((a,b) => nomDeCollection(a.collectionId,collections).localeCompare(nomDeCollection(b.collectionId,collections)) || a.nom.localeCompare(b.nom));
+  } else {
+    copie.sort((a,b) => a.nom.localeCompare(b.nom));
+  }
+  return copie;
+}
+
 function tirageAlea(cartes){
   // fréquence d'apparition inversement proportionnelle à la rareté
   const poids = { commune: 6, rare: 3, legendaire: 1 };
@@ -630,6 +646,7 @@ async function afficherPanneauAdmin(user){
   /* ---- Onglet Cartes (+ gestion des collections) ---- */
   let cartesActuelles = [];
   let collectionsActuelles = [];
+  let triAdmin = 'alphabetique';
   const SUGGESTIONS_COLLECTIONS = ['Cartes Clow', 'Cartes Sakura', 'Clear Cards'];
 
   function rendreCartes(){
@@ -696,11 +713,18 @@ async function afficherPanneauAdmin(user){
 
       <div class="panneau-bloc">
         <h2>Cartes du jeu (${cartes.length})</h2>
-        <div class="grille-cartes" id="grille-cartes">
+        <label>Trier par</label>
+        <select id="c-tri" style="max-width:220px;">
+          <option value="alphabetique" ${triAdmin==='alphabetique'?'selected':''}>Ordre alphabétique</option>
+          <option value="rarete" ${triAdmin==='rarete'?'selected':''}>Niveau de rareté</option>
+          <option value="collection" ${triAdmin==='collection'?'selected':''}>Collection</option>
+        </select>
+        <div class="grille-cartes" id="grille-cartes" style="margin-top:14px;">
           ${cartes.length ? '' : "<div class=\"vide\">Aucune carte pour l'instant — ajoute la première ci-dessus.</div>"}
         </div>
       </div>
     `;
+    $('#c-tri').onchange = (e) => { triAdmin = e.target.value; rendreCartes(); };
 
     /* -- collections : ajout / suppression -- */
     document.querySelectorAll('[data-suggestion]').forEach(b=>{
@@ -728,7 +752,7 @@ async function afficherPanneauAdmin(user){
 
     /* -- cartes : liste -- */
     const grille = $('#grille-cartes');
-    cartes.forEach(c=>{
+    trierCartes(cartes, triAdmin, collections).forEach(c=>{
       const el = document.createElement('div');
       el.className = 'mini-carte';
       el.innerHTML = `
@@ -877,26 +901,60 @@ async function initBibliotheque(){
     <div class="page"><div class="conteneur">
       <div class="entete"><div class="seal"></div><h1>Bibliothèque de ${joueur || '???'}</h1></div>
       <div class="bib-resume" id="bib-resume"></div>
+      <div style="text-align:center; margin-bottom:22px;">
+        <label style="display:inline; margin-right:8px;">Trier par</label>
+        <select id="bib-tri" style="width:auto; display:inline-block;">
+          <option value="alphabetique">Ordre alphabétique</option>
+          <option value="rarete">Niveau de rareté</option>
+          <option value="collection">Collection</option>
+        </select>
+      </div>
       <div class="bib-grille" id="bib-grille"></div>
     </div></div>
   `;
   if(!joueur){ $('#bib-grille').innerHTML = `<div class="vide">Aucun joueur indiqué dans le lien.</div>`; return; }
 
   let cartes = [];
+  let collections = [];
   let captures = {};
-  function rendre(){
-    const total = cartes.length;
-    const obtenues = cartes.filter(c => captures[c.id]).length;
-    $('#bib-resume').innerHTML = `<b>${obtenues}</b> / ${total} cartes obtenues`;
-    $('#bib-grille').innerHTML = cartes.map(c => `
+  let tri = 'alphabetique';
+  $('#bib-tri').onchange = (e) => { tri = e.target.value; rendre(); };
+
+  function carteHTML(c){
+    return `
       <div class="bib-carte ${captures[c.id]?'':'non-obtenue'}">
         <div class="cadre">${captures[c.id] ? `<img src="${c.image}" alt="">` : ''}</div>
         <div class="nom">${captures[c.id] ? c.nom : '???'}</div>
         ${captures[c.id] ? `<div class="qte">x${captures[c.id]}</div>` : ''}
       </div>
-    `).join('') || `<div class="vide">Aucune carte n'existe encore dans le jeu.</div>`;
+    `;
+  }
+
+  function rendre(){
+    const total = cartes.length;
+    const obtenues = cartes.filter(c => captures[c.id]).length;
+    $('#bib-resume').innerHTML = `<b>${obtenues}</b> / ${total} cartes obtenues`;
+    if(!total){ $('#bib-grille').innerHTML = `<div class="vide">Aucune carte n'existe encore dans le jeu.</div>`; return; }
+
+    const triees = trierCartes(cartes, tri, collections);
+    if(tri === 'collection'){
+      const groupes = {};
+      triees.forEach(c => {
+        const nom = nomDeCollection(c.collectionId, collections);
+        (groupes[nom] = groupes[nom] || []).push(c);
+      });
+      $('#bib-grille').innerHTML = Object.keys(groupes).sort().map(nom => `
+        <div style="grid-column:1/-1; margin-top:14px;">
+          <h3 style="font-family:'Cinzel',serif; color:var(--gold-soft); font-size:1rem; border-bottom:1px solid var(--line); padding-bottom:6px;">${nom}</h3>
+        </div>
+        ${groupes[nom].map(carteHTML).join('')}
+      `).join('');
+    } else {
+      $('#bib-grille').innerHTML = triees.map(carteHTML).join('');
+    }
   }
   refCartes.onSnapshot(snap => { cartes = snap.docs.map(d=>({id:d.id, ...d.data()})); rendre(); });
+  refCollections.onSnapshot(snap => { collections = snap.docs.map(d=>({id:d.id, ...d.data()})); rendre(); });
   refCaptures(joueur).onSnapshot(snap => { captures = snap.exists ? snap.data() : {}; rendre(); });
 }
 
