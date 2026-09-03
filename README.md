@@ -100,6 +100,70 @@ toutes les cartes du jeu, celles obtenues en couleur, les autres en grisé.
 
 ---
 
+## 8. Protéger le panneau admin (obligatoire pour la sécurité)
+
+Le panneau admin demande maintenant un e-mail et un mot de passe avant de
+s'afficher. Deux choses à faire une seule fois :
+
+1. Dans la console Firebase, va dans **Build > Authentication**, clique
+   "Get started", puis active la méthode **E-mail/Mot de passe**.
+2. Toujours dans Authentication, onglet **Users**, clique "Add user" et
+   crée ton propre compte (l'e-mail et le mot de passe que tu utiliseras
+   pour te connecter à `?vue=admin`).
+3. Retourne dans **Firestore Database > Règles** et remplace-les par
+   celles-ci (elles interdisent désormais la modification des cartes et
+   réglages à qui n'est pas connecté, tout en laissant l'overlay et la
+   bibliothèque fonctionner normalement) :
+   ```
+   rules_version = '2';
+   service cloud.firestore {
+     match /databases/{database}/documents {
+       match /cartes/{doc} {
+         allow read: if true;
+         allow write: if request.auth != null;
+       }
+       match /collections/{doc} {
+         allow read: if true;
+         allow write: if request.auth != null;
+       }
+       match /config/{doc} {
+         allow read: if true;
+         allow write: if request.auth != null;
+       }
+       match /captures/{doc} {
+         allow read: if true;
+         allow write: if true;
+       }
+     }
+   }
+   ```
+
+*(Limite à connaître : les rédemptions de cartes restent ouvertes en
+écriture côté base de données, car c'est l'overlay — pas un compte connecté —
+qui les enregistre. Ce n'est pas gênant en pratique : ça demanderait des
+connaissances techniques pour en abuser, mais ce n'est pas une protection
+absolue.)*
+
+## 9. Bonus de chance pour les abonnés
+
+Comme la permission nécessaire (`channel:read:subscriptions`) a été ajoutée
+après ta première connexion, il faut te reconnecter une fois :
+
+1. Va dans `?vue=admin` > onglet **Connexion Twitch** > "Se déconnecter".
+2. Reconnecte-toi — Twitch te demandera d'autoriser la nouvelle permission.
+3. Dans l'onglet **Réglages**, règle le bonus (en points de %) ajouté à la
+   chance de capture pour les abonnés.
+4. Refais cette même reconnexion dans le navigateur d'OBS (clic droit sur
+   la source > Interagir) puisque c'est lui qui gère les captures en direct.
+
+## 10. Taille des cartes à l'écran
+
+Toujours dans l'onglet **Réglages** du panneau admin, un menu "Taille des
+cartes à l'écran" propose Petite / Moyenne / Grande. Par défaut le jeu
+utilise désormais un format plus discret (Moyenne) qu'au premier essai —
+ajuste selon la résolution de ton stream et l'espace que tu veux lui laisser
+à l'écran.
+
 ### Notes importantes
 
 - **Un seul appareil doit garder l'overlay ouvert** avec la connexion Twitch
