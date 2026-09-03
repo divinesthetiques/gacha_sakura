@@ -286,8 +286,9 @@ const CONFIG = {
 /* ---------- Firebase ---------- */
 firebase.initializeApp(CONFIG.firebase);
 const db = firebase.firestore();
-const refCartes   = db.collection('cartes');
-const refConfig   = db.collection('config').doc('reglages');
+const refCartes      = db.collection('cartes');
+const refCollections = db.collection('collections');
+const refConfig      = db.collection('config').doc('reglages');
 const refCaptures = (login) => db.collection('captures').doc(login.toLowerCase());
 
 const REGLAGES_DEFAUT = {
@@ -414,15 +415,24 @@ async function initOverlay(){
   $('#regl-toggle button').onclick = () => $('#regl-toggle').classList.toggle('ouvert');
 
   let cartes = [];
+  let collections = [];
   let reglages = REGLAGES_DEFAUT;
   let spawnActuel = null; // { carte, expire, attrapee }
   let broadcasterId = null;
 
   refCartes.onSnapshot(snap => { cartes = snap.docs.map(d=>({id:d.id, ...d.data()})); });
+  refCollections.onSnapshot(snap => { collections = snap.docs.map(d=>({id:d.id, ...d.data()})); });
   refConfig.onSnapshot(snap => {
     reglages = { ...REGLAGES_DEFAUT, ...(snap.exists?snap.data():{}) };
     document.documentElement.style.setProperty('--taille-carte', reglages.tailleCarte + 'px');
   });
+
+  function dosDeLaCarte(carte){
+    if(carte.dos) return carte.dos;
+    const col = collections.find(c => c.id === carte.collectionId);
+    if(col && col.dos) return col.dos;
+    return reglages.dosCarte || null;
+  }
 
   function afficherCarte(carte){
     spawnActuel = { carte, expire: Date.now() + reglages.dureeAffichageSec*1000, attrapee:false };
@@ -432,7 +442,7 @@ async function initOverlay(){
       <div class="carte-cadre">
         <div class="carte-flip">
           <div class="face face-avant"><img src="${carte.image}" alt=""></div>
-          <div class="face face-dos">${carte.dos ? `<img src="${carte.dos}" alt="">` : (reglages.dosCarte ? `<img src="${reglages.dosCarte}" alt="">` : `<div class="dos-defaut"></div>`)}</div>
+          <div class="face face-dos">${(() => { const d = dosDeLaCarte(carte); return d ? `<img src="${d}" alt="">` : `<div class="dos-defaut"></div>`; })()}</div>
         </div>
       </div>
       <div class="carte-nom">${carte.nom}</div>
@@ -617,9 +627,41 @@ async function afficherPanneauAdmin(user){
     };
   });
 
-  /* ---- Onglet Cartes ---- */
-  function rendreCartes(cartes){
+  /* ---- Onglet Cartes (+ gestion des collections) ---- */
+  let cartesActuelles = [];
+  let collectionsActuelles = [];
+  const SUGGESTIONS_COLLECTIONS = ['Cartes Clow', 'Cartes Sakura', 'Clear Cards'];
+
+  function rendreCartes(){
+    const cartes = cartesActuelles;
+    const collections = collectionsActuelles;
+    const nomCollection = id => (collections.find(c=>c.id===id)||{}).nom || '';
+
     $('#onglet-cartes').innerHTML = `
+      <div class="panneau-bloc">
+        <h2>Collections</h2>
+        <p style="color:var(--text-mu); font-size:.85rem;">Chaque collection peut avoir son propre dos de carte, utilisé par toutes ses cartes (sauf si une carte a son propre dos).</p>
+        <div style="display:flex; gap:8px; flex-wrap:wrap; margin:10px 0;">
+          ${SUGGESTIONS_COLLECTIONS.map(s => `<button class="bouton secondaire" data-suggestion="${s}" style="margin:0; padding:6px 14px; font-size:.8rem;">+ ${s}</button>`).join('')}
+        </div>
+        <div class="rangee">
+          <div><label>Nom de la collection</label><input type="text" id="col-nom" placeholder="Ex : Cartes Clow"></div>
+          <div><label>Dos de la collection (facultatif)</label><input type="file" id="col-dos" accept="image/*"></div>
+        </div>
+        <button class="bouton" id="col-ajouter">Ajouter la collection</button>
+        <div id="col-msg"></div>
+        <div class="grille-cartes" style="margin-top:16px;">
+          ${collections.map(c => `
+            <div class="mini-carte">
+              ${c.dos ? `<img src="${c.dos}" alt="">` : `<div style="aspect-ratio:3/4.3;border-radius:8px;background:var(--ink-panel-2);display:flex;align-items:center;justify-content:center;color:var(--text-mu);font-size:.75rem;">Dos par défaut</div>`}
+              <div class="nom">${c.nom}</div>
+              <div class="rar">${cartes.filter(ca=>ca.collectionId===c.id).length} carte(s)</div>
+              <div class="actions"><button data-col="${c.id}">Supprimer</button></div>
+            </div>
+          `).join('') || '<div class="vide">Aucune collection pour l\u2019instant.</div>'}
+        </div>
+      </div>
+
       <div class="panneau-bloc">
         <h2>Ajouter une carte</h2>
         <label>Nom de la carte</label>
@@ -633,21 +675,25 @@ async function afficherPanneauAdmin(user){
             </select>
           </div>
           <div><label>Collection (facultatif)</label>
-            <input type="text" id="c-collection" placeholder="Ex : Cartes Clow">
+            <select id="c-collection">
+              <option value="">— aucune —</option>
+              ${collections.map(c=>`<option value="${c.id}">${c.nom}</option>`).join('')}
+            </select>
           </div>
         </div>
         <div class="rangee">
           <div><label>Image de la carte (face)</label>
             <input type="file" id="c-image" accept="image/*">
           </div>
-          <div><label>Dos de cette carte (facultatif)</label>
+          <div><label>Dos propre à cette carte (facultatif)</label>
             <input type="file" id="c-dos" accept="image/*">
           </div>
         </div>
-        <p style="color:var(--text-mu); font-size:.8rem; margin-top:6px;">Si tu ne mets pas de dos, la carte utilisera le dos par défaut réglé dans l'onglet Réglages.</p>
+        <p style="color:var(--text-mu); font-size:.8rem; margin-top:6px;">Ordre de priorité pour le dos affiché : dos propre à la carte → dos de sa collection → dos par défaut.</p>
         <button class="bouton" id="c-ajouter">Ajouter la carte</button>
         <div id="c-msg"></div>
       </div>
+
       <div class="panneau-bloc">
         <h2>Cartes du jeu (${cartes.length})</h2>
         <div class="grille-cartes" id="grille-cartes">
@@ -655,6 +701,32 @@ async function afficherPanneauAdmin(user){
         </div>
       </div>
     `;
+
+    /* -- collections : ajout / suppression -- */
+    document.querySelectorAll('[data-suggestion]').forEach(b=>{
+      b.onclick = () => { $('#col-nom').value = b.dataset.suggestion; $('#col-nom').focus(); };
+    });
+    $('#col-ajouter').onclick = async () => {
+      const nom = $('#col-nom').value.trim();
+      const fichier = $('#col-dos').files[0];
+      const msg = $('#col-msg');
+      if(!nom){ msg.innerHTML = `<div class="msg erreur">Donne un nom à la collection.</div>`; return; }
+      const donnees = { nom, cree: Date.now() };
+      if(fichier) donnees.dos = await fichierEnBase64(fichier);
+      await refCollections.add(donnees);
+      msg.innerHTML = `<div class="msg succes">Collection ajoutée !</div>`;
+      $('#col-nom').value=''; $('#col-dos').value='';
+    };
+    document.querySelectorAll('[data-col]').forEach(b=>{
+      b.onclick = async () => {
+        const c = collections.find(x=>x.id===b.dataset.col);
+        if(confirm(`Supprimer la collection « ${c.nom} » ? (les cartes qui en font partie ne seront pas supprimées, elles n'auront simplement plus de collection)`)){
+          await refCollections.doc(c.id).delete();
+        }
+      };
+    });
+
+    /* -- cartes : liste -- */
     const grille = $('#grille-cartes');
     cartes.forEach(c=>{
       const el = document.createElement('div');
@@ -662,7 +734,7 @@ async function afficherPanneauAdmin(user){
       el.innerHTML = `
         <img src="${c.image}" alt="">
         <div class="nom">${c.nom}</div>
-        <div class="rar">${c.rarete}${c.collection ? ' · '+c.collection : ''}</div>
+        <div class="rar">${c.rarete}${c.collectionId ? ' · '+nomCollection(c.collectionId) : ''}</div>
         ${c.dos ? '<div class="rar" style="color:var(--gold-soft)">Dos personnalisé ✦</div>' : ''}
         <div class="actions"><button data-id="${c.id}">Supprimer</button></div>
       `;
@@ -672,23 +744,25 @@ async function afficherPanneauAdmin(user){
       grille.appendChild(el);
     });
 
+    /* -- cartes : ajout -- */
     $('#c-ajouter').onclick = async () => {
       const nom = $('#c-nom').value.trim();
       const rarete = $('#c-rarete').value;
-      const collection = $('#c-collection').value.trim();
+      const collectionId = $('#c-collection').value;
       const fichier = $('#c-image').files[0];
       const fichierDos = $('#c-dos').files[0];
       const msg = $('#c-msg');
       if(!nom || !fichier){ msg.innerHTML = `<div class="msg erreur">Nom et image sont obligatoires.</div>`; return; }
       const image = await fichierEnBase64(fichier);
-      const donnees = { nom, rarete, collection, image, cree: Date.now() };
+      const donnees = { nom, rarete, collectionId, image, cree: Date.now() };
       if(fichierDos) donnees.dos = await fichierEnBase64(fichierDos);
       await refCartes.add(donnees);
       msg.innerHTML = `<div class="msg succes">Carte ajoutée !</div>`;
-      $('#c-nom').value=''; $('#c-collection').value=''; $('#c-image').value=''; $('#c-dos').value='';
+      $('#c-nom').value=''; $('#c-image').value=''; $('#c-dos').value='';
     };
   }
-  refCartes.onSnapshot(snap => rendreCartes(snap.docs.map(d=>({id:d.id, ...d.data()}))));
+  refCartes.onSnapshot(snap => { cartesActuelles = snap.docs.map(d=>({id:d.id, ...d.data()})); rendreCartes(); });
+  refCollections.onSnapshot(snap => { collectionsActuelles = snap.docs.map(d=>({id:d.id, ...d.data()})); rendreCartes(); });
 
   /* ---- Onglet Réglages ---- */
   function rendreReglages(r){
