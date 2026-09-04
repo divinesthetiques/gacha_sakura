@@ -39,8 +39,8 @@ const CONFIG = {
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-auth-compat.js"></script>
-<!-- Client de chat Twitch -->
-<script src="https://cdn.jsdelivr.net/npm/tmi.js@1.8.5/dist/tmi.min.js"></script>
+<!-- Client de chat Twitch : connexion IRC native (WebSocket), pas de dépendance externe -->
+
 
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600;700&family=Nunito+Sans:wght@400;600;700;800&display=swap');
@@ -564,25 +564,51 @@ async function initOverlay(){
     }
   }
 
-  /* ---- Chat (lecture de !macollection + envoi des messages du jeu) ---- */
-  let clientChat = null;
+  /* ---- Chat (lecture de !macollection + envoi des messages du jeu) — IRC Twitch natif ---- */
+  let socketChat = null;
   function demarrerChat(){
-    clientChat = new tmi.Client({
-      identity:{ username: divinesthetiques, password: `oauth:${TwitchAuth.token()}` },
-      channels:[ CONFIG.twitch.channel ]
-    });
-    clientChat.connect().then(()=> $('#pt-chat').classList.add('ok')).catch(()=>{});
-    clientChat.on('message', (channel, tags, message) => {
-      if(message.trim().toLowerCase() === CONFIG.chatCommand.toLowerCase()){
-        const pseudo = tags['display-name'] || tags.username;
-        envoyerChat(`@${pseudo} voici ta bibliothèque : ${lienBibliotheque(tags.username)}`);
-      }
-    });
+    const canal = '#' + CONFIG.twitch.channel.toLowerCase();
+    socketChat = new WebSocket('wss://irc-ws.chat.twitch.tv:443');
+
+    socketChat.onopen = () => {
+      socketChat.send(`PASS oauth:${TwitchAuth.token()}`);
+      socketChat.send(`NICK ${CONFIG.twitch.channel.toLowerCase()}`);
+      socketChat.send('CAP REQ :twitch.tv/tags twitch.tv/commands');
+      socketChat.send(`JOIN ${canal}`);
+    };
+
+    socketChat.onmessage = (evt) => {
+      evt.data.split('\r\n').filter(Boolean).forEach(ligne => {
+        if(ligne.startsWith('PING')){ socketChat.send('PONG :tmi.twitch.tv'); return; }
+        if(ligne.includes(' 001 ')){ $('#pt-chat').classList.add('ok'); return; } // connexion + auth réussies
+        if(ligne.includes('NOTICE') && ligne.toLowerCase().includes('login authentication failed')){
+          $('#pt-chat').classList.remove('ok');
+          return;
+        }
+        const m = ligne.match(/^(?:@([^ ]+) )?:[^ ]+!\S+ PRIVMSG (#\S+) :(.*)$/);
+        if(m){
+          const tagsBrut = {};
+          (m[1]||'').split(';').forEach(p => { const [k,v] = p.split('='); if(k) tagsBrut[k]=v; });
+          const message = m[3];
+          const pseudoAffiche = tagsBrut['display-name'] || '';
+          const pseudoLogin = (ligne.match(/^:([^!]+)!/)||[])[1] || pseudoAffiche.toLowerCase();
+          if(message.trim().toLowerCase() === CONFIG.chatCommand.toLowerCase()){
+            envoyerChat(`@${pseudoAffiche||pseudoLogin} voici ta bibliothèque : ${lienBibliotheque(pseudoLogin)}`);
+          }
+        }
+      });
+    };
+
+    socketChat.onclose = () => { $('#pt-chat').classList.remove('ok'); setTimeout(demarrerChat, 4000); };
+    socketChat.onerror = () => {};
   }
   function envoyerChat(texte){
-    if(clientChat) clientChat.say(CONFIG.twitch.channel, texte).catch(()=>{});
+    if(socketChat && socketChat.readyState === WebSocket.OPEN){
+      socketChat.send(`PRIVMSG #${CONFIG.twitch.channel.toLowerCase()} :${texte}`);
+    }
   }
 }
+
 
 /* =========================================================================
    VUE ADMIN — gestion des cartes, réglages, connexion Twitch
