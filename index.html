@@ -28,10 +28,10 @@ const CONFIG = {
   },
   // --- Discord (facultatif — laisse vide pour désactiver) ---
   discordWebhookUrl: "",
-  // --- URL publique où ce fichier sera hébergé (pour générer le lien !macollection) ---
+  // --- URL publique où ce fichier sera hébergé (pour générer le lien !collection) ---
   siteUrl: "https://divinesthetiques.github.io/gacha_sakura/index.html",
   // --- Commande de chat pour consulter sa collection ---
-  chatCommand: "!macollection"
+  chatCommand: "!collection"
 };
 </script>
 
@@ -269,6 +269,26 @@ const CONFIG = {
   .msg{ font-size:.85rem; padding:10px 14px; border-radius:8px; margin-top:10px; }
   .msg.erreur{ background:rgba(224,104,127,.15); color:var(--rose); border:1px solid var(--rose); }
   .msg.succes{ background:rgba(107,216,138,.12); color:#8fe3a8; border:1px solid #6bd88a; }
+
+  /* modale de détail de carte (bibliothèque) */
+  .bib-carte.cliquable{ cursor:pointer; }
+  .modale-fond{
+    position:fixed; inset:0; background:rgba(12,8,18,.78); z-index:60;
+    display:none; align-items:center; justify-content:center; padding:24px;
+  }
+  .modale-fond.ouverte{ display:flex; }
+  .modale-carte{
+    position:relative; max-width:400px; width:100%; text-align:center;
+    background:var(--ink-panel); border:1px solid var(--gold); border-radius:18px; padding:28px 22px;
+  }
+  .modale-carte .fermer{
+    position:absolute; top:10px; right:14px; background:none; border:none;
+    color:var(--text-mu); font-size:1.4rem; cursor:pointer; line-height:1;
+  }
+  .modale-carte img{ width:180px; border-radius:14px; border:3px solid var(--gold); margin-bottom:14px; box-shadow:0 10px 30px rgba(0,0,0,.5); }
+  .modale-carte h2{ color:var(--gold-soft); font-size:1.3rem; margin-bottom:6px; }
+  .modale-carte .meta{ color:var(--text-mu); font-size:.82rem; margin-bottom:14px; text-transform:capitalize; }
+  .modale-carte .desc{ font-size:.9rem; line-height:1.55; color:var(--text-lo); text-align:left; }
 
   @media (max-width:640px){ .rangee{ grid-template-columns:1fr; } }
 </style>
@@ -546,6 +566,15 @@ async function initOverlay(){
       return;
     }
     const carte = spawnActuel.carte;
+
+    // une seule carte de ce type par viewer : remboursement s'il l'a déjà
+    const docCaptures = await refCaptures(pseudo).get();
+    if(docCaptures.exists && docCaptures.data()[carte.id]){
+      await TwitchAuth.majStatutRedemption(bId, evenement.reward.id, evenement.id, 'CANCELED');
+      envoyerChat(`↩️ ${pseudo}, tu as déjà « ${carte.nom} » (limitée à un exemplaire) — points remboursés !`);
+      return;
+    }
+
     const abonne = await TwitchAuth.estAbonne(bId, evenement.user_id);
     const base = reglages.chance[carte.rarete] ?? 50;
     const bonus = abonne ? (reglages.bonusAbonnesPourcent||0) : 0;
@@ -554,17 +583,17 @@ async function initOverlay(){
 
     if(reussite){
       marquerAttrapee();
-      await refCaptures(pseudo).set({ [carte.id]: firebase.firestore.FieldValue.increment(1) }, { merge:true });
+      await refCaptures(pseudo).set({ [carte.id]: 1 }, { merge:true });
       await TwitchAuth.majStatutRedemption(bId, evenement.reward.id, evenement.id, 'FULFILLED');
-      envoyerChat(`✨ ${pseudo} a capturé la carte ${carte.rarete==='legendaire'?'LÉGENDAIRE':carte.rarete} « ${carte.nom} » !`);
-      posterDiscord(`✨ **${pseudo}** a capturé la carte *${carte.nom}* (${carte.rarete}) !`);
+      envoyerChat(`✨ ${pseudo} a capturé la carte ${carte.rarete==='legendaire'?'LÉGENDAIRE':carte.rarete} « ${carte.nom} » ! ✨`);
+      posterDiscord(`✨ **${pseudo}** a capturé la carte *${carte.nom}* (${carte.rarete}) ! ✨`);
     } else {
       await TwitchAuth.majStatutRedemption(bId, evenement.reward.id, evenement.id, 'CANCELED');
       envoyerChat(`💨 ${pseudo} a tenté d'attraper « ${carte.nom} »... la carte s'est échappée !`);
     }
   }
 
-  /* ---- Chat (lecture de !macollection + envoi des messages du jeu) — IRC Twitch natif ---- */
+  /* ---- Chat (lecture de !collection + envoi des messages du jeu) — IRC Twitch natif ---- */
   let socketChat = null;
   function demarrerChat(){
     const canal = '#' + CONFIG.twitch.channel.toLowerCase();
@@ -673,12 +702,14 @@ async function afficherPanneauAdmin(user){
   let cartesActuelles = [];
   let collectionsActuelles = [];
   let triAdmin = 'alphabetique';
+  let carteEnEdition = null;
   const SUGGESTIONS_COLLECTIONS = ['Cartes Clow', 'Cartes Sakura', 'Clear Cards'];
 
   function rendreCartes(){
     const cartes = cartesActuelles;
     const collections = collectionsActuelles;
     const nomCollection = id => (collections.find(c=>c.id===id)||{}).nom || '';
+    const edit = carteEnEdition ? cartes.find(c=>c.id===carteEnEdition) : null;
 
     $('#onglet-cartes').innerHTML = `
       <div class="panneau-bloc">
@@ -706,34 +737,37 @@ async function afficherPanneauAdmin(user){
       </div>
 
       <div class="panneau-bloc">
-        <h2>Ajouter une carte</h2>
+        <h2>${edit ? `Modifier « ${edit.nom} »` : 'Ajouter une carte'}</h2>
         <label>Nom de la carte</label>
-        <input type="text" id="c-nom" placeholder="Ex : Le Bouclier">
+        <input type="text" id="c-nom" placeholder="Ex : Le Bouclier" value="${edit ? edit.nom.replace(/"/g,'&quot;') : ''}">
         <div class="rangee">
           <div><label>Rareté</label>
             <select id="c-rarete">
-              <option value="commune">Commune</option>
-              <option value="rare">Rare</option>
-              <option value="legendaire">Légendaire</option>
+              <option value="commune" ${edit && edit.rarete==='commune'?'selected':''}>Commune</option>
+              <option value="rare" ${edit && edit.rarete==='rare'?'selected':''}>Rare</option>
+              <option value="legendaire" ${edit && edit.rarete==='legendaire'?'selected':''}>Légendaire</option>
             </select>
           </div>
           <div><label>Collection (facultatif)</label>
             <select id="c-collection">
               <option value="">— aucune —</option>
-              ${collections.map(c=>`<option value="${c.id}">${c.nom}</option>`).join('')}
+              ${collections.map(c=>`<option value="${c.id}" ${edit && edit.collectionId===c.id?'selected':''}>${c.nom}</option>`).join('')}
             </select>
           </div>
         </div>
+        <label>Description (visible dans la bibliothèque)</label>
+        <textarea id="c-description" rows="3" style="width:100%; padding:9px 12px; border-radius:8px; border:1px solid var(--line); background:var(--ink-deep); color:var(--text-lo); font:inherit; resize:vertical;" placeholder="Ex : Cette carte permet d'invoquer le pouvoir du feu...">${edit && edit.description ? edit.description.replace(/</g,'&lt;') : ''}</textarea>
         <div class="rangee">
-          <div><label>Image de la carte (face)</label>
+          <div><label>Image de la carte (face)${edit ? ' — laisse vide pour garder l\u2019actuelle' : ''}</label>
             <input type="file" id="c-image" accept="image/*">
           </div>
-          <div><label>Dos propre à cette carte (facultatif)</label>
+          <div><label>Dos propre à cette carte (facultatif)${edit ? ' — laisse vide pour garder l\u2019actuel' : ''}</label>
             <input type="file" id="c-dos" accept="image/*">
           </div>
         </div>
         <p style="color:var(--text-mu); font-size:.8rem; margin-top:6px;">Ordre de priorité pour le dos affiché : dos propre à la carte → dos de sa collection → dos par défaut.</p>
-        <button class="bouton" id="c-ajouter">Ajouter la carte</button>
+        <button class="bouton" id="c-ajouter">${edit ? 'Enregistrer les modifications' : 'Ajouter la carte'}</button>
+        ${edit ? '<button class="bouton secondaire" id="c-annuler" style="margin-left:8px;">Annuler</button>' : ''}
         <div id="c-msg"></div>
       </div>
 
@@ -786,29 +820,46 @@ async function afficherPanneauAdmin(user){
         <div class="nom">${c.nom}</div>
         <div class="rar">${c.rarete}${c.collectionId ? ' · '+nomCollection(c.collectionId) : ''}</div>
         ${c.dos ? '<div class="rar" style="color:var(--gold-soft)">Dos personnalisé ✦</div>' : ''}
-        <div class="actions"><button data-id="${c.id}">Supprimer</button></div>
+        <div class="actions">
+          <button data-modifier="${c.id}">Modifier</button>
+          <button data-id="${c.id}">Supprimer</button>
+        </div>
       `;
-      el.querySelector('button').onclick = async () => {
+      el.querySelector('[data-id]').onclick = async () => {
         if(confirm(`Supprimer « ${c.nom} » ?`)) await refCartes.doc(c.id).delete();
+      };
+      el.querySelector('[data-modifier]').onclick = () => {
+        carteEnEdition = c.id;
+        rendreCartes();
+        $('.panneau-bloc h2').scrollIntoView({behavior:'smooth', block:'center'});
       };
       grille.appendChild(el);
     });
 
-    /* -- cartes : ajout -- */
+    /* -- cartes : ajout / modification -- */
+    if(edit) $('#c-annuler').onclick = () => { carteEnEdition = null; rendreCartes(); };
     $('#c-ajouter').onclick = async () => {
       const nom = $('#c-nom').value.trim();
       const rarete = $('#c-rarete').value;
       const collectionId = $('#c-collection').value;
+      const description = $('#c-description').value.trim();
       const fichier = $('#c-image').files[0];
       const fichierDos = $('#c-dos').files[0];
       const msg = $('#c-msg');
-      if(!nom || !fichier){ msg.innerHTML = `<div class="msg erreur">Nom et image sont obligatoires.</div>`; return; }
-      const image = await fichierEnBase64(fichier);
-      const donnees = { nom, rarete, collectionId, image, cree: Date.now() };
+      if(!nom || (!fichier && !edit)){ msg.innerHTML = `<div class="msg erreur">Nom et image sont obligatoires.</div>`; return; }
+      const donnees = { nom, rarete, collectionId, description };
+      if(fichier) donnees.image = await fichierEnBase64(fichier);
       if(fichierDos) donnees.dos = await fichierEnBase64(fichierDos);
-      await refCartes.add(donnees);
-      msg.innerHTML = `<div class="msg succes">Carte ajoutée !</div>`;
-      $('#c-nom').value=''; $('#c-image').value=''; $('#c-dos').value='';
+      if(edit){
+        await refCartes.doc(edit.id).set(donnees, { merge:true });
+        msg.innerHTML = `<div class="msg succes">Carte modifiée !</div>`;
+        carteEnEdition = null;
+      } else {
+        donnees.cree = Date.now();
+        await refCartes.add(donnees);
+        msg.innerHTML = `<div class="msg succes">Carte ajoutée !</div>`;
+      }
+      rendreCartes();
     };
   }
   refCartes.onSnapshot(snap => { cartesActuelles = snap.docs.map(d=>({id:d.id, ...d.data()})); rendreCartes(); });
@@ -937,7 +988,23 @@ async function initBibliotheque(){
       </div>
       <div class="bib-grille" id="bib-grille"></div>
     </div></div>
+    <div class="modale-fond" id="modale-fond">
+      <div class="modale-carte" id="modale-contenu"></div>
+    </div>
   `;
+  $('#modale-fond').onclick = (e) => { if(e.target.id === 'modale-fond') fermerModale(); };
+  function fermerModale(){ $('#modale-fond').classList.remove('ouverte'); }
+  function ouvrirModale(c){
+    $('#modale-contenu').innerHTML = `
+      <button class="fermer" id="modale-fermer">×</button>
+      <img src="${c.image}" alt="">
+      <h2>${c.nom}</h2>
+      <div class="meta">${c.rarete}${c.collectionId ? ' · ' + nomDeCollection(c.collectionId, collections) : ''}</div>
+      ${c.description ? `<div class="desc">${c.description.replace(/</g,'&lt;').replace(/\n/g,'<br>')}</div>` : ''}
+    `;
+    $('#modale-fermer').onclick = fermerModale;
+    $('#modale-fond').classList.add('ouverte');
+  }
   if(!joueur){ $('#bib-grille').innerHTML = `<div class="vide">Aucun joueur indiqué dans le lien.</div>`; return; }
 
   let cartes = [];
@@ -948,7 +1015,7 @@ async function initBibliotheque(){
 
   function carteHTML(c){
     return `
-      <div class="bib-carte ${captures[c.id]?'':'non-obtenue'}">
+      <div class="bib-carte ${captures[c.id]?'cliquable':'non-obtenue'}" ${captures[c.id] ? `data-ouvrir="${c.id}"` : ''}>
         <div class="cadre">${captures[c.id] ? `<img src="${c.image}" alt="">` : ''}</div>
         <div class="nom">${captures[c.id] ? c.nom : '???'}</div>
         ${captures[c.id] ? `<div class="qte">x${captures[c.id]}</div>` : ''}
@@ -978,6 +1045,9 @@ async function initBibliotheque(){
     } else {
       $('#bib-grille').innerHTML = triees.map(carteHTML).join('');
     }
+    $('#bib-grille').querySelectorAll('[data-ouvrir]').forEach(el => {
+      el.onclick = () => ouvrirModale(cartes.find(c => c.id === el.dataset.ouvrir));
+    });
   }
   refCartes.onSnapshot(snap => { cartes = snap.docs.map(d=>({id:d.id, ...d.data()})); rendre(); });
   refCollections.onSnapshot(snap => { collections = snap.docs.map(d=>({id:d.id, ...d.data()})); rendre(); });
