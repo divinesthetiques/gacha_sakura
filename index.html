@@ -176,6 +176,73 @@ const CONFIG = {
     border:1px solid var(--line); white-space:nowrap;
   }
 
+
+  /* ---- Variante "bandeau" : parchemin discret qui se déroule sur le côté (pour les moments de jeu) ---- */
+  .bandeau{
+    --h-bandeau: calc(var(--taille-carte) * .5);
+    --largeur-papier: max(250px, calc(var(--h-bandeau) * 4.4));
+    position:absolute; display:flex; align-items:stretch;
+    height:var(--h-bandeau); pointer-events:none;
+    filter:drop-shadow(0 6px 14px rgba(0,0,0,.5));
+  }
+  .bandeau.bas-gauche{ left:22px; bottom:22px; }
+  .bandeau.bas-droite{ right:22px; bottom:22px; flex-direction:row-reverse; }
+  .bandeau.haut-gauche{ left:22px; top:22px; }
+  .bandeau.haut-droite{ right:22px; top:22px; flex-direction:row-reverse; }
+
+  .rouleau{
+    flex:none; width:max(12px, calc(var(--h-bandeau) * .17)); margin:-5px 0; border-radius:999px;
+    background:linear-gradient(90deg,#7a5a1d,#e9cf94 38%,#d3a94f 58%,#7a5a1d);
+    box-shadow:inset 0 0 0 1px rgba(0,0,0,.3); position:relative; z-index:2;
+  }
+  .papier{
+    flex:none; width:0; overflow:hidden; display:flex; justify-content:flex-start;
+    background:linear-gradient(180deg,#3d2f5c,#2a1f40);
+    border-top:2px solid var(--gold); border-bottom:2px solid var(--gold);
+    transition:width .95s cubic-bezier(.3,.85,.3,1);
+  }
+  .bandeau.haut-droite .papier, .bandeau.bas-droite .papier{ justify-content:flex-end; }
+  .bandeau.ouvert .papier{ width:var(--largeur-papier); }
+
+  .papier-contenu{
+    position:relative; flex:none; width:var(--largeur-papier);
+    display:flex; align-items:center; gap:12px; padding:0 16px;
+  }
+  .vignette{
+    flex:none; height:calc(var(--h-bandeau) - 16px); aspect-ratio:1/1.45;
+    border-radius:6px; border:2px solid var(--gold); overflow:hidden;
+    box-shadow:0 0 14px var(--rarity-glow, rgba(211,169,79,.4));
+  }
+  .vignette img{ width:100%; height:100%; object-fit:cover; display:block; }
+  .bandeau-texte{ min-width:0; display:flex; flex-direction:column; gap:3px; }
+  .bandeau-nom{
+    font-family:'Cinzel',serif; font-size:max(13px, calc(var(--h-bandeau) * .22));
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  }
+  .bandeau-sous{ font-size:max(11px, calc(var(--h-bandeau) * .15)); color:var(--gold-soft); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .bandeau.rarete-commune .bandeau-rar{ color:var(--common); }
+  .bandeau.rarete-rare .bandeau-rar{ color:var(--rare); }
+  .bandeau.rarete-legendaire .bandeau-rar{ color:var(--legendary); }
+  .bandeau.rarete-commune{ --rarity-glow: rgba(159,182,201,.45); }
+  .bandeau.rarete-rare{ --rarity-glow: rgba(185,142,224,.5); }
+  .bandeau.rarete-legendaire{ --rarity-glow: rgba(233,178,63,.65); }
+
+  /* barre de temps restant (se vide pendant que la carte est disponible) */
+  .bandeau-minuteur{
+    position:absolute; left:0; right:0; bottom:0; height:3px; background:var(--gold);
+    transform-origin:left; animation:minuteur linear .95s forwards;
+  }
+  @keyframes minuteur{ from{ transform:scaleX(1); } to{ transform:scaleX(0); } }
+
+  /* capture réussie : éclat doré avant de s'enrouler */
+  .bandeau.attrapee .bandeau-minuteur{ display:none; }
+  .bandeau.attrapee .papier{ animation:eclat 1.2s ease-out; }
+  @keyframes eclat{
+    0%{ box-shadow:inset 0 0 0 rgba(233,207,148,0); }
+    35%{ box-shadow:inset 0 0 40px rgba(233,207,148,.75); }
+    100%{ box-shadow:inset 0 0 0 rgba(233,207,148,0); }
+  }
+
   /* petit panneau réglage discret dans l'overlay (clic droit > Interagir dans OBS) */
   .overlay-reglages{
     position:absolute; top:14px; right:14px; z-index:10;
@@ -318,6 +385,8 @@ const REGLAGES_DEFAUT = {
   chance: { commune: 70, rare: 40, legendaire: 15 }, // % de réussite à la capture
   bonusAbonnesPourcent: 15, // points de % ajoutés à la chance si le viewer est abonné
   tailleCarte: 150, // largeur en pixels de la carte affichée dans l'overlay
+  styleOverlay: 'centre', // 'centre' (grande carte au milieu) ou 'bandeau' (parchemin discret sur le côté)
+  positionBandeau: 'bas-gauche', // bas-gauche | bas-droite | haut-gauche | haut-droite
   dosCarte: '', // image du dos de carte (base64) affichée pendant le retournement — vide = dos par défaut
   rewardId: '', rewardTitle: '',
 };
@@ -446,6 +515,7 @@ async function initOverlay(){
         </div>
       </div>
       <div class="carte-spawn" id="carte-spawn"></div>
+      <div class="bandeau" id="bandeau"></div>
     </div>
   `;
   $('#regl-toggle button').onclick = () => $('#regl-toggle').classList.toggle('ouvert');
@@ -470,8 +540,46 @@ async function initOverlay(){
     return reglages.dosCarte || null;
   }
 
+  // style : le paramètre d'URL (&style=bandeau / &style=centre) prime sur le réglage de l'admin
+  function styleActif(){
+    const p = params.get('style');
+    if(p === 'bandeau' || p === 'centre') return p;
+    return reglages.styleOverlay === 'bandeau' ? 'bandeau' : 'centre';
+  }
+  function positionActive(){
+    const valides = ['bas-gauche','bas-droite','haut-gauche','haut-droite'];
+    const p = params.get('position');
+    if(valides.includes(p)) return p;
+    return valides.includes(reglages.positionBandeau) ? reglages.positionBandeau : 'bas-gauche';
+  }
+
+  function afficherBandeau(carte){
+    const b = $('#bandeau');
+    const duree = reglages.dureeAffichageSec;
+    b.className = `bandeau ${positionActive()} rarete-${carte.rarete}`;
+    b.innerHTML = `
+      <div class="rouleau"></div>
+      <div class="papier"><div class="papier-contenu">
+        <div class="vignette"><img src="${carte.image}" alt=""></div>
+        <div class="bandeau-texte">
+          <div class="bandeau-nom">${carte.nom}</div>
+          <div class="bandeau-sous"><span class="bandeau-rar">${carte.rarete}</span> · à attraper !</div>
+        </div>
+        <div class="bandeau-minuteur" style="animation-duration:${Math.max(duree-1,1)}s; animation-delay:.95s"></div>
+      </div></div>
+      <div class="rouleau"></div>
+    `;
+    // double rAF : laisse le navigateur dessiner l'état « enroulé » avant de lancer le déroulement
+    requestAnimationFrame(()=> requestAnimationFrame(()=> b.classList.add('ouvert')));
+  }
+
   function afficherCarte(carte){
-    spawnActuel = { carte, expire: Date.now() + reglages.dureeAffichageSec*1000, attrapee:false };
+    spawnActuel = { carte, expire: Date.now() + reglages.dureeAffichageSec*1000, attrapee:false, style: styleActif() };
+    if(spawnActuel.style === 'bandeau'){
+      afficherBandeau(carte);
+      setTimeout(()=>{ if(spawnActuel && !spawnActuel.attrapee) masquerCarte(); }, reglages.dureeAffichageSec*1000);
+      return;
+    }
     const el = $('#carte-spawn');
     el.className = `carte-spawn rarete-${carte.rarete}`;
     el.innerHTML = `
@@ -489,14 +597,25 @@ async function initOverlay(){
     setTimeout(()=>{ if(spawnActuel && !spawnActuel.attrapee) masquerCarte(); }, reglages.dureeAffichageSec*1000);
   }
   function masquerCarte(){
+    if(spawnActuel && spawnActuel.style === 'bandeau') $('#bandeau').classList.remove('ouvert'); // s'enroule
     $('#carte-spawn').classList.remove('visible');
     spawnActuel = null;
   }
-  function marquerAttrapee(){
+  function marquerAttrapee(pseudo){
     if(!spawnActuel) return;
+    const style = spawnActuel.style;
     spawnActuel.attrapee = true;
-    $('#carte-spawn').classList.add('attrapee');
-    setTimeout(()=> $('#carte-spawn').classList.remove('visible','attrapee'), 650);
+    if(style === 'bandeau'){
+      const b = $('#bandeau');
+      b.classList.add('attrapee');
+      const sous = b.querySelector('.bandeau-sous');
+      if(sous) sous.textContent = `✨ Capturée par ${pseudo}`;
+      setTimeout(()=> b.classList.remove('ouvert'), 2600);   // laisse lire le pseudo, puis s'enroule
+      setTimeout(()=> b.classList.remove('attrapee'), 3800);
+    } else {
+      $('#carte-spawn').classList.add('attrapee');
+      setTimeout(()=> $('#carte-spawn').classList.remove('visible','attrapee'), 650);
+    }
     spawnActuel = null;
   }
 
@@ -582,7 +701,7 @@ async function initOverlay(){
     const reussite = Math.random() < chance;
 
     if(reussite){
-      marquerAttrapee();
+      marquerAttrapee(pseudo);
       await refCaptures(pseudo).set({ [carte.id]: 1 }, { merge:true });
       await TwitchAuth.majStatutRedemption(bId, evenement.reward.id, evenement.id, 'FULFILLED');
       envoyerChat(`✨ ${pseudo} a capturé la carte ${carte.rarete==='legendaire'?'LÉGENDAIRE':carte.rarete} « ${carte.nom} » ! ✨`);
@@ -897,6 +1016,19 @@ async function afficherPanneauAdmin(user){
           <option value="150" ${r.tailleCarte==150?'selected':''}>Moyenne</option>
           <option value="200" ${r.tailleCarte==200?'selected':''}>Grande</option>
         </select>
+        <label>Style de l'overlay</label>
+        <select id="r-style">
+          <option value="centre" ${r.styleOverlay!=='bandeau'?'selected':''}>Grande carte au centre de l'écran</option>
+          <option value="bandeau" ${r.styleOverlay==='bandeau'?'selected':''}>Bandeau discret (parchemin qui se déroule)</option>
+        </select>
+        <label>Position du bandeau</label>
+        <select id="r-pos">
+          <option value="bas-gauche" ${r.positionBandeau==='bas-gauche'?'selected':''}>En bas à gauche</option>
+          <option value="bas-droite" ${r.positionBandeau==='bas-droite'?'selected':''}>En bas à droite</option>
+          <option value="haut-gauche" ${r.positionBandeau==='haut-gauche'?'selected':''}>En haut à gauche</option>
+          <option value="haut-droite" ${r.positionBandeau==='haut-droite'?'selected':''}>En haut à droite</option>
+        </select>
+        <p style="color:var(--text-mu); font-size:.8rem; margin-top:6px;">Le réglage de taille ci-dessus s'applique aussi au bandeau. Pour forcer un style sur une source OBS précise, ajoute <b>&amp;style=bandeau</b> (ou <b>&amp;style=centre</b>) et, si besoin, <b>&amp;position=haut-droite</b> à son URL : ça prime sur ce réglage.</p>
         <label>Dos de carte (affiché pendant l'animation de retournement)</label>
         ${r.dosCarte ? `<img src="${r.dosCarte}" style="width:80px;border-radius:8px;border:1px solid var(--line);margin-bottom:8px;display:block;">` : ''}
         <input type="file" id="r-dos" accept="image/*">
@@ -921,6 +1053,8 @@ async function afficherPanneauAdmin(user){
         chance:{ commune:+$('#r-c-commune').value, rare:+$('#r-c-rare').value, legendaire:+$('#r-c-legendaire').value },
         bonusAbonnesPourcent:+$('#r-bonus-abo').value,
         tailleCarte:+$('#r-taille').value,
+        styleOverlay:$('#r-style').value,
+        positionBandeau:$('#r-pos').value,
         rewardId:r.rewardId, rewardTitle:r.rewardTitle
       }, { merge:true });
       $('#r-msg').innerHTML = `<div class="msg succes">Réglages enregistrés.</div>`;

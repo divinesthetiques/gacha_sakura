@@ -164,6 +164,29 @@ utilise désormais un format plus discret (Moyenne) qu'au premier essai —
 ajuste selon la résolution de ton stream et l'espace que tu veux lui laisser
 à l'écran.
 
+## 11. Variante « bandeau » pour les moments de jeu
+
+À la place de la grande carte au centre, l'overlay peut afficher un petit
+parchemin discret dans un coin de l'écran : il se déroule, montre la vignette
+de la carte, son nom, sa rareté et une barre de temps, puis s'enroule. Quand
+une carte est attrapée, il affiche « ✨ Capturée par … » avant de s'enrouler.
+
+**Option simple (une seule source OBS)** : dans `?vue=admin` > **Réglages** >
+**Affichage**, choisis « Bandeau discret » et sa position (4 coins). Le
+changement s'applique tout de suite, sans toucher à OBS. La taille
+Petite/Moyenne/Grande règle aussi celle du bandeau.
+
+**Option par scène (grande carte en « Just Chatting », bandeau en jeu)** :
+crée une source Navigateur par scène et force le style dans l'URL :
+- `...index.html?vue=overlay&style=bandeau`
+- `...index.html?vue=overlay&style=bandeau&position=haut-droite`
+- `...index.html?vue=overlay&style=centre`
+
+L'URL prime sur le réglage de l'admin. **Important** : dans les propriétés de
+chaque source Navigateur, coche « Arrêter la source lorsqu'elle n'est pas
+visible », sinon deux overlays tournent en même temps et traitent chacun les
+points de chaîne (double message dans le chat).
+
 ### Notes importantes
 
 - **Un seul appareil doit garder l'overlay ouvert** avec la connexion Twitch
